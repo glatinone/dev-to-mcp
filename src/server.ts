@@ -246,5 +246,124 @@ export const getServer = () => {
     },
   );
 
+  // ── Write tools ────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "create_article",
+    {
+      title: "Create Article",
+      description:
+        "Create a new article on dev.to. Requires DEVTO_API_KEY. Defaults to draft (published: false) unless explicitly set to true.",
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        title: z.string().describe("Article title"),
+        body_markdown: z.string().describe("Article body in Markdown"),
+        published: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Whether to publish immediately (default: false = draft)"),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe("Up to 4 tag slugs (e.g. [\"javascript\", \"webdev\"])"),
+        series: z
+          .string()
+          .optional()
+          .describe("Series name to add the article to"),
+        canonical_url: z
+          .string()
+          .optional()
+          .describe("Canonical URL if the article was originally published elsewhere"),
+        description: z
+          .string()
+          .optional()
+          .describe("Short description / subtitle shown in listings"),
+      },
+    },
+    async (args) => {
+      logger.info({ title: args.title, published: args.published }, "Creating article");
+      try {
+        const data = await devToAPI.createArticle(args);
+        logger.debug({ title: args.title }, "Article created");
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error, args }, "Failed to create article");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_article",
+    {
+      title: "Update Article",
+      description:
+        "Update an existing dev.to article by ID. Requires DEVTO_API_KEY. Only provide the fields you want to change.",
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        id: z.number().describe("Article ID to update"),
+        title: z.string().optional().describe("New article title"),
+        body_markdown: z.string().optional().describe("New article body in Markdown"),
+        published: z
+          .boolean()
+          .optional()
+          .describe("Set to true to publish, false to unpublish/revert to draft"),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe("Replacement tag list (up to 4 slugs)"),
+        series: z.string().optional().describe("Series name"),
+        canonical_url: z.string().optional().describe("Canonical URL"),
+        description: z.string().optional().describe("Short description / subtitle"),
+      },
+    },
+    async (args) => {
+      logger.info({ id: args.id }, "Updating article");
+      try {
+        const data = await devToAPI.updateArticle(args);
+        logger.debug({ id: args.id }, "Article updated");
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error, args }, "Failed to update article");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_article",
+    {
+      title: "Delete Article",
+      description:
+        "Unpublish a dev.to article by ID (the DEV.to public API does not support hard-delete; this sets published=false). Requires DEVTO_API_KEY.",
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+      },
+      inputSchema: {
+        id: z.number().describe("Article ID to unpublish"),
+      },
+    },
+    async (args) => {
+      logger.info({ id: args.id }, "Deleting (unpublishing) article");
+      try {
+        const data = await devToAPI.deleteArticle(args);
+        logger.debug({ id: args.id }, "Article unpublished");
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error, args }, "Failed to delete article");
+        throw error;
+      }
+    },
+  );
+
   return server;
 };
