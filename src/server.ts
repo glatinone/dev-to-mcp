@@ -365,6 +365,171 @@ export const getServer = () => {
     },
   );
 
+  // ── My article tools ──────────────────────────────────────────────────────
+
+  server.registerTool(
+    "get_my_articles",
+    {
+      title: "Get My Articles",
+      description:
+        "Get articles belonging to the authenticated user. Filter by state: 'published', 'unpublished' (drafts), or 'all'. Requires DEVTO_API_KEY.",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        state: z
+          .enum(["published", "unpublished", "all"])
+          .optional()
+          .default("all")
+          .describe("Filter by article state (default: all)"),
+        page: z.number().optional().default(1).describe("Page number (default: 1)"),
+        per_page: z
+          .number()
+          .optional()
+          .default(30)
+          .describe("Articles per page (default: 30, max: 1000)"),
+      },
+    },
+    async (args) => {
+      logger.info({ state: args.state }, "Getting my articles");
+      try {
+        const data = await devToAPI.getMyArticles(args);
+        logger.debug(
+          { count: Array.isArray(data) ? data.length : "unknown" },
+          "My articles retrieved",
+        );
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error }, "Failed to get my articles");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_draft_articles",
+    {
+      title: "Get Draft Articles",
+      description:
+        "Get all unpublished (draft) articles for the authenticated user. Requires DEVTO_API_KEY.",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        page: z.number().optional().default(1).describe("Page number (default: 1)"),
+        per_page: z
+          .number()
+          .optional()
+          .default(30)
+          .describe("Drafts per page (default: 30, max: 1000)"),
+      },
+    },
+    async (args) => {
+      logger.info("Getting draft articles");
+      try {
+        const data = await devToAPI.getDraftArticles(args);
+        logger.debug(
+          { count: Array.isArray(data) ? data.length : "unknown" },
+          "Draft articles retrieved",
+        );
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error }, "Failed to get draft articles");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "publish_article",
+    {
+      title: "Publish Article",
+      description:
+        "Publish a draft article by ID. Sets published=true. Requires DEVTO_API_KEY.",
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        id: z.number().describe("Article ID to publish"),
+      },
+    },
+    async (args) => {
+      logger.info({ id: args.id }, "Publishing article");
+      try {
+        const data = await devToAPI.publishArticle(args);
+        logger.debug({ id: args.id }, "Article published");
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error, id: args.id }, "Failed to publish article");
+        throw error;
+      }
+    },
+  );
+
+  // ── Advanced search ────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "advanced_search_articles",
+    {
+      title: "Advanced Search Articles",
+      description:
+        "Search articles with advanced filters: tag, username, state, trending window, reading time range, and published-since date. Client-side filters (min/max reading time, since) are applied after fetching.",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        tag: z.string().optional().describe("Filter by a single tag slug"),
+        username: z.string().optional().describe("Filter by author username"),
+        state: z
+          .enum(["fresh", "rising", "all"])
+          .optional()
+          .describe("Article state filter"),
+        top: z
+          .number()
+          .optional()
+          .describe("Trending window in days (1, 7, 30, or omit for all-time)"),
+        page: z.number().optional().default(1).describe("Page number (default: 1)"),
+        per_page: z
+          .number()
+          .optional()
+          .default(30)
+          .describe("Results per page (default: 30, max: 1000)"),
+        min_reading_time: z
+          .number()
+          .optional()
+          .describe("Minimum reading time in minutes (client-side filter)"),
+        max_reading_time: z
+          .number()
+          .optional()
+          .describe("Maximum reading time in minutes (client-side filter)"),
+        since: z
+          .string()
+          .optional()
+          .describe(
+            "Only include articles published on or after this date (ISO 8601, e.g. 2024-01-01)",
+          ),
+      },
+    },
+    async (args) => {
+      logger.info({ args }, "Advanced search articles");
+      try {
+        const data = await devToAPI.advancedSearchArticles(args);
+        logger.debug(
+          { count: Array.isArray(data) ? data.length : "unknown" },
+          "Advanced search completed",
+        );
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error, args }, "Advanced search failed");
+        throw error;
+      }
+    },
+  );
+
   // ── Auth tool ──────────────────────────────────────────────────────────────
 
   server.registerTool(
