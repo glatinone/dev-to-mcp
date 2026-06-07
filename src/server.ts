@@ -365,6 +365,130 @@ export const getServer = () => {
     },
   );
 
+  // ── Challenge tools ────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "get_challenges",
+    {
+      title: "Get DEV.to Challenges",
+      description:
+        "List active and recent DEV.to challenges. Challenges are announced as articles by the official @devteam account tagged with #devchallenge — there is no dedicated /api/challenges endpoint.",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        per_page: z
+          .number()
+          .optional()
+          .default(10)
+          .describe("Number of challenges to return (default: 10)"),
+        page: z.number().optional().default(1).describe("Page number (default: 1)"),
+      },
+    },
+    async (args) => {
+      logger.info({ args }, "Getting DEV.to challenges");
+      try {
+        const data = await devToAPI.getChallenges(args);
+        logger.debug(
+          { count: Array.isArray(data) ? data.length : "unknown" },
+          "Challenges retrieved",
+        );
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error }, "Failed to get challenges");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_challenge_detail",
+    {
+      title: "Get Challenge Detail",
+      description:
+        "Get the full article content of a DEV.to challenge, including description, judging criteria, prizes, and key dates. Pass the article path from get_challenges (e.g. 'devteam/join-the-june-solstice-game-jam-1000-in-prizes-3jla').",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        path: z
+          .string()
+          .describe(
+            "Article path from get_challenges, e.g. 'devteam/join-the-june-solstice-game-jam-1000-in-prizes-3jla'",
+          ),
+      },
+    },
+    async (args) => {
+      logger.info({ path: args.path }, "Getting challenge detail");
+      try {
+        const data = await devToAPI.getChallengeDetail(args);
+        logger.debug({ path: args.path }, "Challenge detail retrieved");
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error, path: args.path }, "Failed to get challenge detail");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "plan_challenge_submissions",
+    {
+      title: "Plan Challenge Submissions",
+      description: `Generate a structured multi-article submission plan for a DEV.to challenge.
+Returns a series name and 3–4 ready-to-use draft articles with full body_markdown templates.
+The result can be passed directly to batch_create_articles to create all drafts at once.
+
+Typical workflow:
+1. get_challenges → find an open challenge
+2. get_challenge_detail → read requirements and judging criteria
+3. plan_challenge_submissions → generate the article plan
+4. batch_create_articles → create all drafts in one call`,
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+      inputSchema: {
+        challenge_title: z.string().describe("Name of the challenge, e.g. 'June Solstice Game Jam'"),
+        challenge_description: z
+          .string()
+          .describe("Short description of the challenge requirements and theme"),
+        theme: z
+          .string()
+          .describe(
+            "The challenge theme or prompt, e.g. 'light and darkness, solstice, passage of time'",
+          ),
+        your_angle: z
+          .string()
+          .describe(
+            "What you plan to build or write about, e.g. 'a browser puzzle game where daylight is your resource'",
+          ),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe("Extra tags to include in every article (max 2, challenge tag is auto-added)"),
+        count: z
+          .number()
+          .optional()
+          .default(3)
+          .describe("Number of articles to plan (3 or 4, default: 3)"),
+      },
+    },
+    async (args) => {
+      logger.info({ challenge: args.challenge_title, count: args.count }, "Planning challenge submissions");
+      try {
+        const plan = devToAPI.planChallengeSubmissions(args);
+        logger.debug({ challenge: args.challenge_title }, "Submission plan generated");
+        return createTextResult(plan);
+      } catch (error) {
+        logger.error({ error, args }, "Failed to plan challenge submissions");
+        throw error;
+      }
+    },
+  );
+
   // ── My article tools ──────────────────────────────────────────────────────
 
   server.registerTool(
