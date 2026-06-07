@@ -1,17 +1,23 @@
 # Dev.to MCP Server
 
-A remote Model Context Protocol (MCP) server for interacting with the dev.to public API without requiring authentication.
+A Model Context Protocol (MCP) server for interacting with the dev.to public API. Includes both read-only tools for browsing and authenticated write tools for creating, updating, and deleting articles.
 
 ## Features
 
-This MCP server provides access to the following dev.to public API endpoints:
+This MCP server provides access to the following dev.to API endpoints:
 
+### Read-only tools (no authentication required)
 - **get_articles** - Get articles from dev.to with optional filters (username, tag, state, pagination)
 - **get_article** - Get a specific article by ID or path
 - **get_user** - Get user information by ID or username
 - **get_tags** - Get popular tags from dev.to
 - **get_comments** - Get comments for a specific article
 - **search_articles** - Search articles using query parameters
+
+### Write tools (requires DEVTO_API_KEY)
+- **create_article** - Create a new draft or published article
+- **update_article** - Update an existing article (title, body, tags, series, etc.)
+- **delete_article** - Unpublish an article
 
 ## Installation
 
@@ -191,6 +197,54 @@ Search articles:
 - `page` - Pagination page (default: 1)
 - `per_page` - Articles per page (default: 30, max: 1000)
 - `search_fields` - Fields to search (title, body_text, tag_list)
+
+## Write Operations
+
+All write operations require the `DEVTO_API_KEY` environment variable to be set with a valid dev.to API key.
+
+### create_article
+
+Create a new article:
+
+- `title` - Article title (required)
+- `body_markdown` - Article body in Markdown (required)
+- `published` - Whether to publish immediately (default: false = draft)
+- `tags` - Array of tag slugs, up to 4 (e.g., `["javascript", "webdev"]`)
+- `series` - Series name to add the article to
+- `canonical_url` - Canonical URL if published elsewhere
+- `description` - Short description/subtitle for listings
+
+### update_article
+
+Update an existing article:
+
+- `id` - Article ID (required)
+- `title` - New title
+- `body_markdown` - New body in Markdown
+- `published` - Set to true to publish, false to unpublish
+- `tags` - Replacement tag list
+- `series` - Series name
+- `canonical_url` - Canonical URL
+- `description` - Short description
+
+Only provide the fields you want to change.
+
+### delete_article
+
+Unpublish an article (the dev.to public API does not support hard-delete):
+
+- `id` - Article ID (required)
+
+This sets `published: false` on the article.
+
+## Configuration
+
+### Environment Variables
+
+- `DEVTO_API_KEY` - Your dev.to API key (required for write operations)
+- `PORT` - HTTP server port (default: 3000)
+- `NODE_ENV` - Environment (default: development)
+- `LOG_LEVEL` - Log level: error, warn, info, debug (default: info)
 
 ## License
 
