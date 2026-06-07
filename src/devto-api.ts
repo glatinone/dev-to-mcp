@@ -1,6 +1,8 @@
 import { logger } from "./logger.ts";
 
-interface ArticlePayload {
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface ArticlePayload {
   title?: string;
   body_markdown?: string;
   published?: boolean;
@@ -22,41 +24,130 @@ interface GetArticlesArgs {
   collection_id?: number;
 }
 
+/** Structured error returned by the DEV.to API. */
+export class DevToError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly details?: string,
+  ) {
+    super(message);
+    this.name = "DevToError";
+  }
+}
+
+// ── Retry helpers ─────────────────────────────────────────────────────────────
+
+const RETRY_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 500;
+
+/** Wait for a given number of milliseconds. */
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Calculate delay before next retry attempt.
+ * Respects the Retry-After header for 429 responses; falls back to
+ * exponential backoff (500ms, 1000ms, 2000ms …) for other errors.
+ */
+function retryDelay(attempt: number, retryAfterHeader?: string | null): number {
+  if (retryAfterHeader) {
+    const seconds = parseInt(retryAfterHeader, 10);
+    if (!isNaN(seconds)) return seconds * 1_000;
+  }
+  return BASE_DELAY_MS * Math.pow(2, attempt); // 500, 1000, 2000 …
+}
+
+// ── Main class ────────────────────────────────────────────────────────────────
+
 export class DevToAPI {
   #baseUrl: URL;
 
   constructor(baseURL = "https://dev.to/api/") {
-    // Ensure the base URL ends with a slash for proper relative URL construction
     const normalizedBaseURL = baseURL.endsWith("/") ? baseURL : `${baseURL}/`;
     this.#baseUrl = new URL(normalizedBaseURL);
   }
 
-  async #makeRequest(url: URL): Promise<unknown> {
-    logger.debug({ url }, "Making API request");
+  // ── Private request helpers ────────────────────────────────────────────────
 
-    try {
-      const response = await fetch(url);
+  /**
+   * Execute a fetch with automatic retry on transient failures.
+   * Retries on: 429 (rate-limit) + 5xx server errors + network errors.
+   */
+  async #fetchWithRetry(
+    url: URL,
+    options: RequestInit = {},
+  ): Promise<Response> {
+    let lastError: unknown;
 
-      if (!response.ok) {
-        logger.error(
-          {
-            url,
-            status: response.status,
-            statusText: response.statusText,
-          },
-          "API request failed",
-        );
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(url, options);
+
+        // Transient — retry after a delay
+        if (RETRY_STATUS_CODES.has(response.status) && attempt < MAX_RETRIES) {
+          const delay = retryDelay(
+            attempt,
+            response.headers.get("Retry-After"),
+          );
+          logger.warn(
+            { url: url.toString(), status: response.status, attempt, delay },
+            `Retrying request in ${delay}ms`,
+          );
+          await sleep(delay);
+          continue;
+        }
+
+        return response;
+      } catch (err) {
+        // Network error (DNS, timeout, etc.) — retry
+        lastError = err;
+        if (attempt < MAX_RETRIES) {
+          const delay = retryDelay(attempt);
+          logger.warn(
+            { url: url.toString(), attempt, delay, err },
+            `Network error, retrying in ${delay}ms`,
+          );
+          await sleep(delay);
+        }
       }
-
-      logger.debug({ url, status: response.status }, "API request successful");
-      return response.json();
-    } catch (error) {
-      logger.error({ url, error }, "API request error");
-      throw error;
     }
+
+    throw lastError ?? new Error("Request failed after maximum retries");
   }
 
+  /**
+   * Make an unauthenticated GET request to the DEV.to API.
+   */
+  async #makeRequest(url: URL): Promise<unknown> {
+    logger.debug({ url: url.toString() }, "GET request");
+
+    const response = await this.#fetchWithRetry(url);
+
+    if (!response.ok) {
+      const details = await response.text().catch(() => response.statusText);
+      logger.error(
+        { url: url.toString(), status: response.status, details },
+        "GET request failed",
+      );
+      throw new DevToError(
+        `DEV.to API error ${response.status}: ${response.statusText}`,
+        response.status,
+        details,
+      );
+    }
+
+    logger.debug(
+      { url: url.toString(), status: response.status },
+      "GET request successful",
+    );
+    return response.json();
+  }
+
+  /**
+   * Make an authenticated POST / PUT / DELETE request to the DEV.to API.
+   * Reads the API key from the DEVTO_API_KEY environment variable.
+   */
   async #makeWriteRequest(
     url: URL,
     method: "POST" | "PUT" | "DELETE",
@@ -64,119 +155,109 @@ export class DevToAPI {
   ): Promise<unknown> {
     const apiKey = process.env.DEVTO_API_KEY;
     if (!apiKey) {
-      throw new Error(
+      throw new DevToError(
         "DEVTO_API_KEY environment variable is not set. An API key is required for write operations.",
+        401,
       );
     }
 
-    logger.debug({ url, method }, "Making authenticated API request");
+    logger.debug({ url: url.toString(), method }, "Authenticated request");
 
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: {
-          "api-key": apiKey,
-          "Content-Type": "application/json",
-          Accept: "application/vnd.forem.api-v1+json",
-        },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
+    const response = await this.#fetchWithRetry(url, {
+      method,
+      headers: {
+        "api-key": apiKey,
+        "Content-Type": "application/json",
+        Accept: "application/vnd.forem.api-v1+json",
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        logger.error(
-          { url, method, status: response.status, error: errorText },
-          "Authenticated API request failed",
-        );
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      logger.debug(
-        { url, method, status: response.status },
-        "Authenticated API request successful",
+    if (!response.ok) {
+      const details = await response.text().catch(() => response.statusText);
+      logger.error(
+        { url: url.toString(), method, status: response.status, details },
+        "Authenticated request failed",
       );
+      throw new DevToError(
+        `DEV.to API error ${response.status}: ${response.statusText}`,
+        response.status,
+        details,
+      );
+    }
 
-      // 204 No Content — nothing to parse
-      if (response.status === 204) return { success: true };
-      return response.json();
-    } catch (error) {
-      logger.error({ url, method, error }, "Authenticated API request error");
-      throw error;
+    logger.debug(
+      { url: url.toString(), method, status: response.status },
+      "Authenticated request successful",
+    );
+
+    if (response.status === 204) return { success: true };
+    return response.json();
+  }
+
+  // ── Validation helper ──────────────────────────────────────────────────────
+
+  #requirePositiveInt(value: number, label: string): void {
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new DevToError(`${label} must be a positive integer`, 400);
     }
   }
+
+  // ── Read tools ─────────────────────────────────────────────────────────────
 
   async getArticles(args: GetArticlesArgs = {}): Promise<unknown> {
     const url = new URL("articles", this.#baseUrl);
-    Object.entries(args).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(args)) {
       if (value !== undefined && value !== null) {
         url.searchParams.append(key, String(value));
       }
-    });
-    return await this.#makeRequest(url);
+    }
+    return this.#makeRequest(url);
   }
 
   async getArticle(args: { id?: number; path?: string }): Promise<unknown> {
-    let endpoint: URL;
-
     if (args.id) {
-      // Validate ID is a positive integer
-      if (!Number.isInteger(args.id) || args.id <= 0) {
-        throw new Error("Article ID must be a positive integer");
-      }
-      endpoint = new URL(`articles/${args.id}`, this.#baseUrl);
-    } else if (args.path) {
-      // Sanitize path parameter
-      endpoint = new URL(
-        `articles/${encodeURIComponent(args.path)}`,
-        this.#baseUrl,
-      );
-    } else {
-      throw new Error("Either id or path must be provided");
+      this.#requirePositiveInt(args.id, "Article ID");
+      return this.#makeRequest(new URL(`articles/${args.id}`, this.#baseUrl));
     }
-
-    return await this.#makeRequest(endpoint);
+    if (args.path) {
+      return this.#makeRequest(
+        new URL(`articles/${encodeURIComponent(args.path)}`, this.#baseUrl),
+      );
+    }
+    throw new DevToError("Either id or path must be provided", 400);
   }
 
   async getUser(args: { id?: number; username?: string }): Promise<unknown> {
-    let endpoint: URL;
-
     if (args.id) {
-      // Validate ID is a positive integer
-      if (!Number.isInteger(args.id) || args.id <= 0) {
-        throw new Error("User ID must be a positive integer");
-      }
-      endpoint = new URL(`users/${args.id}`, this.#baseUrl);
-    } else if (args.username) {
-      endpoint = new URL("users/by_username", this.#baseUrl);
-      endpoint.searchParams.set("url", args.username);
-    } else {
-      throw new Error("Either id or username must be provided");
+      this.#requirePositiveInt(args.id, "User ID");
+      return this.#makeRequest(new URL(`users/${args.id}`, this.#baseUrl));
     }
-
-    return await this.#makeRequest(endpoint);
+    if (args.username) {
+      const url = new URL("users/by_username", this.#baseUrl);
+      url.searchParams.set("url", args.username);
+      return this.#makeRequest(url);
+    }
+    throw new DevToError("Either id or username must be provided", 400);
   }
 
   async getTags(
     args: { page?: number; per_page?: number } = {},
   ): Promise<unknown> {
     const url = new URL("tags", this.#baseUrl);
-    Object.entries(args).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(args)) {
       if (value !== undefined && value !== null) {
         url.searchParams.append(key, String(value));
       }
-    });
-    return await this.#makeRequest(url);
+    }
+    return this.#makeRequest(url);
   }
 
   async getComments(args: { article_id: number }): Promise<unknown> {
-    // Validate article_id is a positive integer
-    if (!Number.isInteger(args.article_id) || args.article_id <= 0) {
-      throw new Error("Article ID must be a positive integer");
-    }
-
+    this.#requirePositiveInt(args.article_id, "Article ID");
     const url = new URL("comments", this.#baseUrl);
     url.searchParams.set("a_id", String(args.article_id));
-    return await this.#makeRequest(url);
+    return this.#makeRequest(url);
   }
 
   async searchArticles(args: {
@@ -186,13 +267,25 @@ export class DevToAPI {
     search_fields?: string;
   }): Promise<unknown> {
     const url = new URL("search/feed_content", this.#baseUrl);
-    Object.entries(args).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(args)) {
       if (value !== undefined && value !== null) {
         url.searchParams.append(key, String(value));
       }
-    });
-    return await this.#makeRequest(url);
+    }
+    return this.#makeRequest(url);
   }
+
+  // ── Auth / account tools ───────────────────────────────────────────────────
+
+  /**
+   * Validate the configured API key and return the authenticated user's profile.
+   */
+  async validateApiKey(): Promise<unknown> {
+    const url = new URL("users/me", this.#baseUrl);
+    return this.#makeWriteRequest(url, "GET" as never);
+  }
+
+  // ── Write tools ────────────────────────────────────────────────────────────
 
   async createArticle(args: {
     title: string;
@@ -204,7 +297,7 @@ export class DevToAPI {
     description?: string;
   }): Promise<unknown> {
     const url = new URL("articles", this.#baseUrl);
-    const payload: { article: ArticlePayload } = {
+    return this.#makeWriteRequest(url, "POST", {
       article: {
         title: args.title,
         body_markdown: args.body_markdown,
@@ -213,9 +306,8 @@ export class DevToAPI {
         series: args.series,
         canonical_url: args.canonical_url,
         description: args.description,
-      },
-    };
-    return await this.#makeWriteRequest(url, "POST", payload);
+      } satisfies ArticlePayload,
+    });
   }
 
   async updateArticle(args: {
@@ -228,24 +320,87 @@ export class DevToAPI {
     canonical_url?: string;
     description?: string;
   }): Promise<unknown> {
-    if (!Number.isInteger(args.id) || args.id <= 0) {
-      throw new Error("Article ID must be a positive integer");
-    }
+    this.#requirePositiveInt(args.id, "Article ID");
     const { id, ...fields } = args;
-    const url = new URL(`articles/${id}`, this.#baseUrl);
-    const payload: { article: ArticlePayload } = { article: fields };
-    return await this.#makeWriteRequest(url, "PUT", payload);
+    return this.#makeWriteRequest(new URL(`articles/${id}`, this.#baseUrl), "PUT", {
+      article: fields satisfies ArticlePayload,
+    });
   }
 
   async deleteArticle(args: { id: number }): Promise<unknown> {
-    if (!Number.isInteger(args.id) || args.id <= 0) {
-      throw new Error("Article ID must be a positive integer");
-    }
+    this.#requirePositiveInt(args.id, "Article ID");
     // DEV.to's public API does not expose a hard-delete endpoint.
     // Unpublishing (published: false) is the closest equivalent.
-    const url = new URL(`articles/${args.id}`, this.#baseUrl);
-    return await this.#makeWriteRequest(url, "PUT", {
-      article: { published: false },
-    });
+    return this.#makeWriteRequest(
+      new URL(`articles/${args.id}`, this.#baseUrl),
+      "PUT",
+      { article: { published: false } },
+    );
+  }
+
+  // ── Batch tools ────────────────────────────────────────────────────────────
+
+  /**
+   * Create multiple articles sequentially.
+   * Returns an array of results — each entry is either the created article
+   * or an error object if that individual request failed.
+   */
+  async batchCreateArticles(
+    articles: Array<{
+      title: string;
+      body_markdown: string;
+      published?: boolean;
+      tags?: string[];
+      series?: string;
+      canonical_url?: string;
+      description?: string;
+    }>,
+  ): Promise<Array<{ index: number; success: boolean; data?: unknown; error?: string }>> {
+    const results = [];
+    for (let i = 0; i < articles.length; i++) {
+      try {
+        const data = await this.createArticle(articles[i]);
+        results.push({ index: i, success: true, data });
+        logger.info({ index: i, title: articles[i].title }, "Batch create: article created");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        results.push({ index: i, success: false, error: message });
+        logger.warn({ index: i, title: articles[i].title, error: message }, "Batch create: article failed");
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Update multiple articles sequentially.
+   * Returns an array of results — each entry is either the updated article
+   * or an error object if that individual request failed.
+   */
+  async batchUpdateArticles(
+    articles: Array<{
+      id: number;
+      title?: string;
+      body_markdown?: string;
+      published?: boolean;
+      tags?: string[];
+      series?: string;
+      canonical_url?: string;
+      description?: string;
+    }>,
+  ): Promise<Array<{ index: number; id: number; success: boolean; data?: unknown; error?: string }>> {
+    const results = [];
+    for (let i = 0; i < articles.length; i++) {
+      const { id } = articles[i];
+      try {
+        const data = await this.updateArticle(articles[i]);
+        results.push({ index: i, id, success: true, data });
+        logger.info({ index: i, id }, "Batch update: article updated");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        results.push({ index: i, id, success: false, error: message });
+        logger.warn({ index: i, id, error: message }, "Batch update: article failed");
+      }
+    }
+    return results;
   }
 }
