@@ -408,4 +408,147 @@ describe("DevToAPI", () => {
       expect(results[1].error).toContain("404");
     });
   });
+
+  // ── Challenge tools ───────────────────────────────────────────────────────────
+
+  describe("getChallenges", () => {
+    it("queries articles with devchallenge tag and devteam username", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(mockResponse([{ id: 1, title: "June Game Jam" }]));
+
+      const result = await api.getChallenges({ per_page: 5 });
+      const url = fetchSpy.mock.calls[0][0] as URL;
+
+      expect(url.searchParams.get("tag")).toBe("devchallenge");
+      expect(url.searchParams.get("username")).toBe("devteam");
+      expect(url.searchParams.get("per_page")).toBe("5");
+      expect(result).toEqual([{ id: 1, title: "June Game Jam" }]);
+    });
+
+    it("uses defaults when no args provided", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(mockResponse([]));
+
+      await api.getChallenges();
+      const url = fetchSpy.mock.calls[0][0] as URL;
+      expect(url.searchParams.get("tag")).toBe("devchallenge");
+      expect(url.searchParams.get("username")).toBe("devteam");
+    });
+  });
+
+  describe("getChallengeDetail", () => {
+    it("fetches article by path", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(mockResponse({ id: 999, title: "Game Jam Challenge" }));
+
+      await api.getChallengeDetail({
+        path: "devteam/join-the-june-solstice-game-jam",
+      });
+      const url = fetchSpy.mock.calls[0][0] as URL;
+      expect(url.pathname).toContain("devteam");
+    });
+
+    it("throws DevToError when path is empty", async () => {
+      await expect(api.getChallengeDetail({ path: "" })).rejects.toBeInstanceOf(
+        DevToError,
+      );
+    });
+
+    it("throws DevToError when path is only whitespace", async () => {
+      await expect(api.getChallengeDetail({ path: "   " })).rejects.toBeInstanceOf(
+        DevToError,
+      );
+    });
+  });
+
+  describe("planChallengeSubmissions", () => {
+    const baseArgs = {
+      challenge_title: "June Solstice Game Jam",
+      challenge_description: "Build a game inspired by June and its celebrations",
+      theme: "light and darkness, passage of time",
+      your_angle: "a puzzle game where daylight is your resource",
+    };
+
+    it("returns 3 articles by default", () => {
+      const plan = api.planChallengeSubmissions(baseArgs) as Record<string, unknown>;
+      expect(plan.total_articles).toBe(3);
+      expect((plan.submissions as unknown[]).length).toBe(3);
+    });
+
+    it("returns 4 articles when count is 4", () => {
+      const plan = api.planChallengeSubmissions({ ...baseArgs, count: 4 }) as Record<string, unknown>;
+      expect(plan.total_articles).toBe(4);
+      expect((plan.submissions as unknown[]).length).toBe(4);
+    });
+
+    it("clamps count to min 3 and max 4", () => {
+      const tooFew = api.planChallengeSubmissions({ ...baseArgs, count: 1 }) as Record<string, unknown>;
+      expect(tooFew.total_articles).toBe(3); // minimum is 3: concept + build + demo
+
+      const tooMany = api.planChallengeSubmissions({ ...baseArgs, count: 10 }) as Record<string, unknown>;
+      expect(tooMany.total_articles).toBe(4);
+    });
+
+    it("includes challenge title and series name", () => {
+      const plan = api.planChallengeSubmissions(baseArgs) as Record<string, unknown>;
+      expect(plan.challenge_title).toBe("June Solstice Game Jam");
+      expect(typeof plan.series_name).toBe("string");
+      expect((plan.series_name as string).length).toBeGreaterThan(0);
+    });
+
+    it("each submission has required fields", () => {
+      const plan = api.planChallengeSubmissions(baseArgs) as Record<string, unknown>;
+      const submissions = plan.submissions as Array<Record<string, unknown>>;
+      for (const s of submissions) {
+        expect(typeof s.suggested_title).toBe("string");
+        expect(typeof s.body_markdown).toBe("string");
+        expect(Array.isArray(s.tags)).toBe(true);
+        expect(s.published).toBe(false);
+        expect(typeof s.series).toBe("string");
+        expect(typeof s.role).toBe("string");
+      }
+    });
+
+    it("body_markdown includes the challenge title", () => {
+      const plan = api.planChallengeSubmissions(baseArgs) as Record<string, unknown>;
+      const submissions = plan.submissions as Array<Record<string, unknown>>;
+      const allBodies = submissions.map((s) => s.body_markdown as string).join("\n");
+      expect(allBodies).toContain("June Solstice Game Jam");
+    });
+
+    it("devchallenge tag is always included", () => {
+      const plan = api.planChallengeSubmissions(baseArgs) as Record<string, unknown>;
+      const submissions = plan.submissions as Array<Record<string, unknown>>;
+      for (const s of submissions) {
+        expect(s.tags).toContain("devchallenge");
+      }
+    });
+
+    it("merges extra tags when provided", () => {
+      const plan = api.planChallengeSubmissions({
+        ...baseArgs,
+        tags: ["javascript"],
+      }) as Record<string, unknown>;
+      const submissions = plan.submissions as Array<Record<string, unknown>>;
+      // At least one article should contain the extra tag
+      const hasTag = submissions.some((s) => (s.tags as string[]).includes("javascript"));
+      expect(hasTag).toBe(true);
+    });
+
+    it("adds a deep-dive article as article 3 when count is 4", () => {
+      const plan = api.planChallengeSubmissions({ ...baseArgs, count: 4 }) as Record<string, unknown>;
+      const submissions = plan.submissions as Array<Record<string, unknown>>;
+      const roles = submissions.map((s) => s.role);
+      expect(roles).toContain("deep-dive");
+      expect(roles).toContain("demo");
+    });
+
+    it("note field tells user to pass to batch_create_articles", () => {
+      const plan = api.planChallengeSubmissions(baseArgs) as Record<string, unknown>;
+      expect(plan.note).toContain("batch_create_articles");
+    });
+  });
 });
