@@ -18,8 +18,17 @@ This MCP server provides access to the following dev.to API endpoints:
 - **create_article** - Create a new draft or published article
 - **update_article** - Update an existing article (title, body, tags, series, etc.)
 - **delete_article** - Unpublish an article
+- **publish_article** - Publish a draft article by ID
 - **batch_create_articles** - Create up to 20 articles in one call; returns per-item success/error
 - **batch_update_articles** - Update up to 20 articles in one call; returns per-item success/error
+
+### My article tools (requires DEVTO_API_KEY)
+- **get_my_articles** - List your own articles filtered by state: `all`, `published`, or `unpublished`
+- **get_draft_articles** - List all your unpublished (draft) articles
+
+### Search tools
+- **search_articles** - Full-text search using the DEV.to search API
+- **advanced_search_articles** - Filter articles by tag, username, state, reading time range, and published date
 
 ### Auth tools (requires DEVTO_API_KEY)
 - **validate_api_key** - Check if your API key is valid and return your account profile
@@ -241,6 +250,40 @@ Unpublish an article (the dev.to public API does not support hard-delete):
 - `id` - Article ID (required)
 
 This sets `published: false` on the article.
+
+### publish_article
+
+Publish a draft article immediately:
+
+- `id` - Article ID (required)
+
+### get_my_articles
+
+List your own articles:
+
+- `state` - `published`, `unpublished`, or `all` (default: `all`)
+- `page` - Page number (default: 1)
+- `per_page` - Articles per page (default: 30)
+
+### get_draft_articles
+
+List your unpublished drafts (shorthand for `get_my_articles` with `state: unpublished`):
+
+- `page` - Page number
+- `per_page` - Drafts per page
+
+### advanced_search_articles
+
+Search with rich filtering — all parameters are optional:
+
+- `tag` - Filter by tag slug
+- `username` - Filter by author username
+- `state` - `fresh`, `rising`, or `all`
+- `top` - Trending window in days (1, 7, 30)
+- `page` / `per_page` - Pagination
+- `min_reading_time` - Minimum reading time in minutes (client-side)
+- `max_reading_time` - Maximum reading time in minutes (client-side)
+- `since` - Only articles published on or after this date (ISO 8601, e.g. `2024-01-01`)
 
 ### validate_api_key
 
