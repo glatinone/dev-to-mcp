@@ -18,6 +18,11 @@ This MCP server provides access to the following dev.to API endpoints:
 - **create_article** - Create a new draft or published article
 - **update_article** - Update an existing article (title, body, tags, series, etc.)
 - **delete_article** - Unpublish an article
+- **batch_create_articles** - Create up to 20 articles in one call; returns per-item success/error
+- **batch_update_articles** - Update up to 20 articles in one call; returns per-item success/error
+
+### Auth tools (requires DEVTO_API_KEY)
+- **validate_api_key** - Check if your API key is valid and return your account profile
 
 ## Installation
 
@@ -236,6 +241,35 @@ Unpublish an article (the dev.to public API does not support hard-delete):
 - `id` - Article ID (required)
 
 This sets `published: false` on the article.
+
+### validate_api_key
+
+Validate the configured API key and return the authenticated user's profile. No parameters required — reads from the `DEVTO_API_KEY` environment variable.
+
+### batch_create_articles
+
+Create multiple articles in one call:
+
+- `articles` - Array of article objects (max 20), each with the same fields as `create_article`
+
+Returns a summary (`succeeded`, `failed`, `total`) and a per-item result array — a single failure does not abort the rest.
+
+### batch_update_articles
+
+Update multiple articles in one call:
+
+- `articles` - Array of update objects (max 20), each with an `id` plus any fields from `update_article`
+
+Returns a summary and per-item results — failures are isolated per article.
+
+## Error handling & reliability
+
+All API requests include automatic retry logic:
+
+- **Rate limiting (429)** — respects the `Retry-After` header
+- **Server errors (5xx)** — exponential backoff: 500ms → 1s → 2s
+- **Network errors** — retries up to 3 times with backoff
+- **Structured errors** — every error includes the HTTP status code and the raw DEV.to error body for easier debugging
 
 ## Configuration
 
