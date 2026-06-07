@@ -365,5 +365,128 @@ export const getServer = () => {
     },
   );
 
+  // ── Auth tool ──────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "validate_api_key",
+    {
+      title: "Validate API Key",
+      description:
+        "Validate the configured DEVTO_API_KEY and return the authenticated user's profile (username, name, follower count, etc.). Use this as a pre-flight check before any write operation.",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      inputSchema: {},
+    },
+    async () => {
+      logger.info("Validating DEV.to API key");
+      try {
+        const data = await devToAPI.validateApiKey();
+        logger.debug("API key validated successfully");
+        return createTextResult(data);
+      } catch (error) {
+        logger.error({ error }, "API key validation failed");
+        throw error;
+      }
+    },
+  );
+
+  // ── Batch tools ────────────────────────────────────────────────────────────
+
+  const articleInputSchema = {
+    title: z.string().describe("Article title"),
+    body_markdown: z.string().describe("Article body in Markdown"),
+    published: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Whether to publish immediately (default: false = draft)"),
+    tags: z
+      .array(z.string())
+      .optional()
+      .describe('Up to 4 tag slugs (e.g. ["javascript", "webdev"])'),
+    series: z.string().optional().describe("Series name"),
+    canonical_url: z.string().optional().describe("Canonical URL if published elsewhere"),
+    description: z.string().optional().describe("Short description / subtitle"),
+  };
+
+  server.registerTool(
+    "batch_create_articles",
+    {
+      title: "Batch Create Articles",
+      description:
+        "Create multiple dev.to articles in one call. Each article is created sequentially. Returns a result for every item — including per-article errors — so a single failure does not abort the rest. Requires DEVTO_API_KEY.",
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        articles: z
+          .array(z.object(articleInputSchema))
+          .min(1)
+          .max(20)
+          .describe("List of articles to create (max 20 per call)"),
+      },
+    },
+    async (args) => {
+      logger.info({ count: args.articles.length }, "Batch creating articles");
+      try {
+        const results = await devToAPI.batchCreateArticles(args.articles);
+        const succeeded = results.filter((r) => r.success).length;
+        const failed = results.length - succeeded;
+        logger.info({ succeeded, failed }, "Batch create completed");
+        return createTextResult({ summary: { succeeded, failed, total: results.length }, results });
+      } catch (error) {
+        logger.error({ error }, "Batch create articles failed");
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    "batch_update_articles",
+    {
+      title: "Batch Update Articles",
+      description:
+        "Update multiple dev.to articles in one call. Each update is applied sequentially. Returns a result for every item — including per-article errors — so a single failure does not abort the rest. Requires DEVTO_API_KEY.",
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+      inputSchema: {
+        articles: z
+          .array(
+            z.object({
+              id: z.number().describe("Article ID to update"),
+              title: z.string().optional().describe("New title"),
+              body_markdown: z.string().optional().describe("New body in Markdown"),
+              published: z.boolean().optional().describe("Set to true to publish, false to unpublish"),
+              tags: z.array(z.string()).optional().describe("Replacement tag list (up to 4 slugs)"),
+              series: z.string().optional().describe("Series name"),
+              canonical_url: z.string().optional().describe("Canonical URL"),
+              description: z.string().optional().describe("Short description / subtitle"),
+            }),
+          )
+          .min(1)
+          .max(20)
+          .describe("List of articles to update (max 20 per call)"),
+      },
+    },
+    async (args) => {
+      logger.info({ count: args.articles.length }, "Batch updating articles");
+      try {
+        const results = await devToAPI.batchUpdateArticles(args.articles);
+        const succeeded = results.filter((r) => r.success).length;
+        const failed = results.length - succeeded;
+        logger.info({ succeeded, failed }, "Batch update completed");
+        return createTextResult({ summary: { succeeded, failed, total: results.length }, results });
+      } catch (error) {
+        logger.error({ error }, "Batch update articles failed");
+        throw error;
+      }
+    },
+  );
+
   return server;
 };
