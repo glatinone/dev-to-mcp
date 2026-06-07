@@ -442,6 +442,274 @@ export class DevToAPI {
     );
   }
 
+  // ── Challenge tools ────────────────────────────────────────────────────────
+
+  /**
+   * List DEV.to challenges.
+   * Challenges are announced as articles by the `devteam` organisation tagged
+   * with `devchallenge`. There is no dedicated /api/challenges endpoint.
+   */
+  async getChallenges(args: {
+    per_page?: number;
+    page?: number;
+  } = {}): Promise<unknown> {
+    const url = new URL("articles", this.#baseUrl);
+    url.searchParams.set("username", "devteam");
+    url.searchParams.set("tag", "devchallenge");
+    for (const [key, value] of Object.entries(args)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
+    }
+    return this.#makeRequest(url);
+  }
+
+  /**
+   * Get the full details of a DEV.to challenge article.
+   * Pass the article path, e.g. "devteam/join-the-june-solstice-game-jam-1000-in-prizes-3jla"
+   */
+  async getChallengeDetail(args: { path: string }): Promise<unknown> {
+    if (!args.path?.trim()) {
+      throw new DevToError("path must be a non-empty string", 400);
+    }
+    return this.getArticle({ path: args.path });
+  }
+
+  /**
+   * Generate a structured multi-article submission plan for a DEV.to challenge.
+   *
+   * This is a pure-logic tool — no API call is made.
+   * Returns a ready-to-use plan with a suggested series name and `count` draft
+   * articles (default 3, max 4), each containing a body_markdown template that
+   * can be fed directly into `create_article` or `batch_create_articles`.
+   */
+  planChallengeSubmissions(args: {
+    challenge_title: string;
+    challenge_description: string;
+    theme: string;
+    your_angle: string;
+    tags?: string[];
+    count?: number;
+  }): unknown {
+    const count = Math.min(Math.max(args.count ?? 3, 3), 4);
+    const { challenge_title, theme, your_angle } = args;
+    const challengeTag = challenge_title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 20);
+
+    const baseTags = [
+      "devchallenge",
+      challengeTag,
+      ...(args.tags ?? []),
+    ].slice(0, 4);
+
+    const seriesName = `${challenge_title} — ${your_angle}`;
+
+    // ── Article templates ───────────────────────────────────────────────────
+
+    const articles = [
+      {
+        role: "concept",
+        suggested_title: `${your_angle}: Concept & Approach for the ${challenge_title}`,
+        description: `How I'm approaching the ${challenge_title} — my idea, the theme connection, and my plan.`,
+        tags: [...new Set([...baseTags, "beginners"])].slice(0, 4),
+        body_markdown: `---
+series: ${seriesName}
+---
+
+## The Challenge
+
+The **[${challenge_title}](https://dev.to/challenges)** theme is: *${theme}*.
+
+I decided to build **${your_angle}** because [explain your personal connection to the theme].
+
+## The Concept
+
+<!-- Describe your project idea in 2-3 sentences -->
+
+## Theme Connection
+
+Here's how my project ties into *${theme}*:
+
+- **[Theme element 1]** — [how it appears in your project]
+- **[Theme element 2]** — [how it appears in your project]
+
+## Tech Stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| [e.g. Language] | [e.g. TypeScript] | [reason] |
+| [e.g. Framework] | [e.g. React] | [reason] |
+| [e.g. Tooling] | [e.g. Vite] | [reason] |
+
+## Roadmap
+
+- [ ] [Milestone 1]
+- [ ] [Milestone 2]
+- [ ] [Milestone 3]
+
+Follow along — next post will cover the build!
+`,
+      },
+      {
+        role: "build",
+        suggested_title: `Building ${your_angle}: Implementation Deep Dive`,
+        description: `The technical details of how I built ${your_angle} — architecture, key decisions, and code highlights.`,
+        tags: [...new Set([...baseTags, "tutorial"])].slice(0, 4),
+        body_markdown: `---
+series: ${seriesName}
+---
+
+## Where We Left Off
+
+In [Part 1](link-to-part-1) I introduced **${your_angle}** for the ${challenge_title}. Now let's get into the build.
+
+## Architecture Overview
+
+<!-- Add a diagram or description of how the pieces fit together -->
+
+## Core Mechanics
+
+### [Feature 1]
+
+\`\`\`[language]
+// [explain what this code does]
+[paste your code here]
+\`\`\`
+
+**Why this approach:** [explain the decision]
+
+### [Feature 2]
+
+\`\`\`[language]
+[paste your code here]
+\`\`\`
+
+## Biggest Challenge
+
+The hardest part was [describe problem].
+
+**How I solved it:** [describe solution]
+
+## What's Next
+
+[Brief teaser of next post — demo, results, or reflection]
+`,
+      },
+      {
+        role: "demo",
+        suggested_title: `${your_angle} — Live Demo & Submission`,
+        description: `Showcasing the finished ${your_angle} built for the ${challenge_title}.`,
+        tags: [...new Set([...baseTags, "showdev"])].slice(0, 4),
+        body_markdown: `---
+series: ${seriesName}
+---
+
+## It's Done! 🎉
+
+After [X days/weeks] of work, **${your_angle}** is complete and submitted for the **${challenge_title}**.
+
+## Demo
+
+<!-- Embed a video, GIF, or screenshot here -->
+<!-- Use ![Alt text](image-url) for images -->
+
+**[▶ Try it live](your-live-link-here)**
+
+**[📦 Source code](your-repo-link-here)**
+
+## Feature Highlights
+
+- **[Feature 1]** — [one-line description]
+- **[Feature 2]** — [one-line description]
+- **[Feature 3]** — [one-line description]
+
+## How It Connects to *${theme}*
+
+[2-3 sentences explicitly connecting your project to the challenge theme — important for judging]
+
+## Reflections
+
+**What went well:** [2-3 things]
+
+**What I'd do differently:** [1-2 things]
+
+**What I learned:** [key takeaway]
+
+---
+
+*This is my submission for the [${challenge_title}](https://dev.to/challenges). Thanks for reading!*
+`,
+      },
+    ];
+
+    // Optional 4th article: deep-dive on one hard problem
+    if (count === 4) {
+      articles.splice(2, 0, {
+        role: "deep-dive",
+        suggested_title: `The Hardest Part of Building ${your_angle} — and How I Solved It`,
+        description: `A focused look at the trickiest technical problem I faced during the ${challenge_title} and the solution I found.`,
+        tags: [...new Set([...baseTags, "tutorial"])].slice(0, 4),
+        body_markdown: `---
+series: ${seriesName}
+---
+
+## The Problem
+
+Midway through building **${your_angle}**, I hit a wall: [describe the specific problem in one sentence].
+
+## Why It Was Hard
+
+[Explain the root cause — timing, state, algorithm, browser API, etc.]
+
+\`\`\`[language]
+// The broken version
+[code that didn't work]
+\`\`\`
+
+The problem: [explain what went wrong]
+
+## What I Tried First
+
+1. **[Attempt 1]** — [result]
+2. **[Attempt 2]** — [result]
+
+## The Solution
+
+\`\`\`[language]
+// The working version
+[code that worked]
+\`\`\`
+
+**Why this works:** [explain clearly]
+
+## Key Takeaway
+
+[One-sentence lesson for other developers facing this problem]
+`,
+      });
+    }
+
+    return {
+      challenge_title,
+      series_name: seriesName,
+      total_articles: articles.length,
+      note: "Pass `submissions` directly to `batch_create_articles` to create all drafts at once.",
+      submissions: articles.map((a, i) => ({
+        index: i,
+        article_number: i + 1,
+        role: a.role,
+        suggested_title: a.suggested_title,
+        description: a.description,
+        tags: a.tags,
+        series: seriesName,
+        published: false,
+        body_markdown: a.body_markdown,
+      })),
+    };
+  }
+
   // ── Batch tools ────────────────────────────────────────────────────────────
 
   /**
