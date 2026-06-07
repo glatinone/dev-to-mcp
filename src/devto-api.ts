@@ -275,6 +275,60 @@ export class DevToAPI {
     return this.#makeRequest(url);
   }
 
+  /**
+   * Search articles with advanced filtering options.
+   * Uses the /api/articles endpoint with richer query parameters
+   * including tag, state, top (days), pagination, and username.
+   * Client-side filters (min/max reading time, since) are applied
+   * to the results after fetching.
+   */
+  async advancedSearchArticles(args: {
+    tag?: string;
+    username?: string;
+    state?: "fresh" | "rising" | "all";
+    top?: number;
+    page?: number;
+    per_page?: number;
+    min_reading_time?: number;
+    max_reading_time?: number;
+    since?: string;
+  }): Promise<unknown> {
+    const { min_reading_time, max_reading_time, since, ...apiParams } = args;
+    const url = new URL("articles", this.#baseUrl);
+
+    for (const [key, value] of Object.entries(apiParams)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.append(key, String(value));
+      }
+    }
+
+    const data = await this.#makeRequest(url);
+    if (!Array.isArray(data)) return data;
+
+    // Apply client-side filters that the API does not natively support
+    return data.filter((article: Record<string, unknown>) => {
+      const readingTime =
+        typeof article.reading_time_minutes === "number"
+          ? article.reading_time_minutes
+          : null;
+
+      if (min_reading_time !== undefined && readingTime !== null) {
+        if (readingTime < min_reading_time) return false;
+      }
+      if (max_reading_time !== undefined && readingTime !== null) {
+        if (readingTime > max_reading_time) return false;
+      }
+      if (since) {
+        const publishedAt =
+          typeof article.published_at === "string"
+            ? new Date(article.published_at)
+            : null;
+        if (publishedAt && publishedAt < new Date(since)) return false;
+      }
+      return true;
+    });
+  }
+
   // ── Auth / account tools ───────────────────────────────────────────────────
 
   /**
@@ -283,6 +337,56 @@ export class DevToAPI {
   async validateApiKey(): Promise<unknown> {
     const url = new URL("users/me", this.#baseUrl);
     return this.#makeWriteRequest(url, "GET" as never);
+  }
+
+  // ── My article tools ───────────────────────────────────────────────────────
+
+  /**
+   * Get articles belonging to the authenticated user.
+   * @param state - 'published' | 'unpublished' | 'all'
+   */
+  async getMyArticles(args: {
+    state?: "published" | "unpublished" | "all";
+    page?: number;
+    per_page?: number;
+  } = {}): Promise<unknown> {
+    const { state = "all", ...rest } = args;
+    const segment =
+      state === "published"
+        ? "articles/me/published"
+        : state === "unpublished"
+          ? "articles/me/unpublished"
+          : "articles/me/all";
+
+    const url = new URL(segment, this.#baseUrl);
+    for (const [key, value] of Object.entries(rest)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.append(key, String(value));
+      }
+    }
+    return this.#makeWriteRequest(url, "GET" as never);
+  }
+
+  /**
+   * Get all unpublished (draft) articles for the authenticated user.
+   */
+  async getDraftArticles(args: {
+    page?: number;
+    per_page?: number;
+  } = {}): Promise<unknown> {
+    return this.getMyArticles({ state: "unpublished", ...args });
+  }
+
+  /**
+   * Publish a draft article by ID (convenience wrapper around updateArticle).
+   */
+  async publishArticle(args: { id: number }): Promise<unknown> {
+    this.#requirePositiveInt(args.id, "Article ID");
+    return this.#makeWriteRequest(
+      new URL(`articles/${args.id}`, this.#baseUrl),
+      "PUT",
+      { article: { published: true } },
+    );
   }
 
   // ── Write tools ────────────────────────────────────────────────────────────
