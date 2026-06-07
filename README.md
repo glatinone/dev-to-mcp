@@ -6,6 +6,11 @@ A Model Context Protocol (MCP) server for interacting with the dev.to public API
 
 This MCP server provides access to the following dev.to API endpoints:
 
+### Challenge tools (no authentication required)
+- **get_challenges** - List active and recent DEV.to challenges (fetches from @devteam + #devchallenge tag)
+- **get_challenge_detail** - Get the full article content of a challenge: description, prizes, judging criteria, key dates
+- **plan_challenge_submissions** - Generate a 3–4 article submission plan with draft templates, ready to pass to `batch_create_articles`
+
 ### Read-only tools (no authentication required)
 - **get_articles** - Get articles from dev.to with optional filters (username, tag, state, pagination)
 - **get_article** - Get a specific article by ID or path
@@ -211,6 +216,48 @@ Search articles:
 - `page` - Pagination page (default: 1)
 - `per_page` - Articles per page (default: 30, max: 1000)
 - `search_fields` - Fields to search (title, body_text, tag_list)
+
+## Challenge Workflow
+
+The recommended flow for participating in a DEV.to challenge:
+
+```
+1. get_challenges              → find an open challenge
+2. get_challenge_detail        → read requirements, judging criteria, prizes
+3. plan_challenge_submissions  → generate a 3-4 article plan with full draft templates
+4. batch_create_articles       → create all drafts in one call (published: false)
+5. update_article              → edit each draft as you build
+6. publish_article             → publish each article when ready
+```
+
+### get_challenges
+
+List recent DEV.to challenges:
+
+- `per_page` - Number of results (default: 10)
+- `page` - Page number (default: 1)
+
+> Challenges are articles posted by the official `@devteam` account tagged `#devchallenge`.
+> DEV.to has no dedicated `/api/challenges` endpoint.
+
+### get_challenge_detail
+
+Fetch the full content of a challenge article:
+
+- `path` - Article path from `get_challenges`, e.g. `devteam/join-the-june-solstice-game-jam-1000-in-prizes-3jla`
+
+### plan_challenge_submissions
+
+Generate a ready-to-use multi-article submission plan:
+
+- `challenge_title` - Name of the challenge (required)
+- `challenge_description` - Short description of requirements (required)
+- `theme` - The challenge theme, e.g. `"light and darkness, passage of time"` (required)
+- `your_angle` - What you plan to build, e.g. `"a puzzle game where daylight is your resource"` (required)
+- `tags` - Extra tags for every article (max 2; `devchallenge` is auto-added)
+- `count` - Number of articles to plan: `3` or `4` (default: 3)
+
+Returns a `series_name`, a `submissions` array with full `body_markdown` templates, and a `note` reminding you to pass it to `batch_create_articles`.
 
 ## Write Operations
 
