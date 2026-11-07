@@ -1,6 +1,40 @@
 # Dev.to MCP Server
 
-A Model Context Protocol (MCP) server for interacting with the dev.to public API. Includes both read-only tools for browsing and authenticated write tools for creating, updating, and deleting articles.
+A Model Context Protocol (MCP) server for the dev.to API: 19 tools for browsing articles, users, tags and comments, finding and planning DEV.to challenge entries, and (with an API key) creating, updating, batch-editing and publishing your own articles. It runs over Streamable HTTP (`/mcp`) or stdio, so it works with any MCP client.
+
+This repository extends [nickytonline/dev-to-mcp](https://github.com/nickytonline/dev-to-mcp) by Nick Taylor, which provides the read-only HTTP server. The stdio transport, the write and batch tools, the challenge tools, the "my articles" tools, advanced search, API-key validation and the retry logic were added here.
+
+## Quick start
+
+Requires Node.js 20 or newer.
+
+```bash
+git clone https://github.com/glatinone/dev-to-mcp.git
+cd dev-to-mcp
+npm install
+npm run build
+npm test                      # vitest unit tests
+
+export DEVTO_API_KEY=...      # optional; only needed for write and "my articles" tools
+npm start                     # Streamable HTTP on http://localhost:3000/mcp
+npm run start:stdio           # or: stdio transport
+```
+
+Example client config for the stdio transport (Claude Desktop, Cursor and similar):
+
+```json
+{
+  "mcpServers": {
+    "dev-to": {
+      "command": "node",
+      "args": ["/absolute/path/to/dev-to-mcp/dist/stdio.js"],
+      "env": { "DEVTO_API_KEY": "your-dev.to-api-key" }
+    }
+  }
+}
+```
+
+For the HTTP transport, point the client at `http://localhost:3000/mcp`.
 
 ## Features
 
@@ -54,10 +88,9 @@ npm run build
 The server runs as a remote HTTP server on port 3000 (or the PORT environment variable) and can be used with any MCP-compatible client.
 
 ```bash
-npm start
+npm start            # HTTP: http://localhost:3000/mcp
+npm run start:stdio  # stdio
 ```
-
-The server will be available at `http://localhost:3000` for MCP connections.
 
 ## Development
 
@@ -65,8 +98,11 @@ The server will be available at `http://localhost:3000` for MCP connections.
 # Build the project
 npm run build
 
-# Watch mode for development
+# Watch mode for development (Node.js 22.6+, uses --experimental-strip-types)
 npm run dev
+
+# Tests
+npm test
 
 # Linting
 npm run lint
@@ -80,6 +116,8 @@ npm run format:check
 ## Docker
 
 ### Using Pre-built Image
+
+The pre-built image is published by the upstream project (`nickytonline/dev-to-mcp`) and contains the upstream read-only server, not the challenge and write tools added in this repository. To get every tool listed above, use [Building from Source](#building-from-source).
 
 Pull and run the pre-built Docker image:
 
@@ -113,8 +151,8 @@ Build and run the MCP server using Docker:
 # Build the Docker image
 docker build -t dev-to-mcp .
 
-# Run the container
-docker run -p 3000:3000 dev-to-mcp
+# Run the container (pass DEVTO_API_KEY to enable the write tools)
+docker run -p 3000:3000 -e DEVTO_API_KEY=your-key dev-to-mcp
 ```
 
 ### Docker Compose
@@ -168,7 +206,7 @@ docker-compose up --build
 
 ## API Endpoints
 
-All endpoints use the public dev.to API (`https://dev.to/api`) and do not require authentication.
+All tools call the dev.to API (`https://dev.to/api`). The read-only tools below need no authentication; the write and "my articles" tools further down require `DEVTO_API_KEY`.
 
 ### get_articles
 
@@ -372,4 +410,4 @@ All API requests include automatic retry logic:
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
