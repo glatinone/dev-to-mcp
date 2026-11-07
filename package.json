@@ -41,5 +41,11 @@
     "express": "^5.1.0",
     "pino": "^9.7.0",
     "pino-pretty": "^13.1.1"
+  },
+  "overrides": {
+    "minimatch@^3.0.0": "^3.1.5",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    }
   }
 }
